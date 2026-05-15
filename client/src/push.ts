@@ -85,6 +85,21 @@ export async function unsubscribeFromPush(): Promise<void> {
   });
 }
 
+export async function sendTestPush(): Promise<{ ok: boolean; message?: string }> {
+  try {
+    const r = await fetch("/api/push/test", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ deviceId: getDeviceId() }),
+    });
+    if (r.ok) return { ok: true };
+    const body = await r.json().catch(() => ({}));
+    return { ok: false, message: body.error || `HTTP ${r.status}` };
+  } catch (e) {
+    return { ok: false, message: e instanceof Error ? e.message : String(e) };
+  }
+}
+
 export async function isSubscribed(): Promise<boolean> {
   if (!pushSupport().supported) return false;
   const reg = await navigator.serviceWorker.getRegistration();

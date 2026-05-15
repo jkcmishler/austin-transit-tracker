@@ -1,12 +1,18 @@
 import Database from "better-sqlite3";
 import { fileURLToPath } from "url";
 import { dirname, join } from "path";
+import { chicagoYmdFromEpochSec } from "./tz.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const DB_PATH = process.env.DB_PATH || join(__dirname, "data.db");
 
 export const db = new Database(DB_PATH);
 db.pragma("journal_mode = WAL");
+
+// Register chicago_day(epoch_sec) so SQL can group by DST-correct local date.
+db.function("chicago_day", { deterministic: true }, (epochSec) =>
+  chicagoYmdFromEpochSec(epochSec)
+);
 
 db.exec(`
   CREATE TABLE IF NOT EXISTS feedback (

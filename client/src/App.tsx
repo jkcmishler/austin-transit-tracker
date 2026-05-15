@@ -3,7 +3,7 @@ import "./App.css";
 import RoutePicker from "./RoutePicker";
 import { loadSavedRoutes, saveSavedRoutes } from "./savedRoutes";
 import { getDeviceId } from "./deviceId";
-import { pushSupport, subscribeToPush, unsubscribeFromPush, isSubscribed, updatePushRoutes } from "./push";
+import { pushSupport, subscribeToPush, unsubscribeFromPush, isSubscribed, updatePushRoutes, sendTestPush } from "./push";
 
 type Delay = {
   tripId: string;
@@ -96,6 +96,14 @@ export default function App() {
     await unsubscribeFromPush();
     setSubscribed(false);
     setPushMsg("Notifications off.");
+  };
+
+  const handleTestPush = async () => {
+    setPushMsg("Sending test notification…");
+    const res = await sendTestPush();
+    setPushMsg(res.ok
+      ? "Test sent. Look for the notification — if you don't see one, your OS/browser blocked it."
+      : `Test failed: ${res.message}`);
   };
 
   // Local override of vote tallies so we don't have to wait for the next /api/delays refresh.
@@ -235,9 +243,14 @@ export default function App() {
         )}
         {push.supported && (
           subscribed ? (
-            <button className="btn btn-ghost" onClick={handleUnsubscribe}>
-              🔔 Notifications on
-            </button>
+            <>
+              <button className="btn btn-ghost" onClick={handleUnsubscribe}>
+                🔔 Notifications on
+              </button>
+              <button className="link-btn" onClick={handleTestPush}>
+                Send test
+              </button>
+            </>
           ) : (
             <button className="btn btn-outline" onClick={handleSubscribe}>
               🔕 Notify me when late

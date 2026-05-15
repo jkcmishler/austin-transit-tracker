@@ -3,6 +3,7 @@ import cors from "cors";
 import AdmZip from "adm-zip";
 import webpush from "web-push";
 import { db } from "./db.js";
+import { startOfChicagoDayFromYmd, chicagoYmdFromEpochSec } from "./tz.js";
 
 const VAPID_PUBLIC = process.env.VAPID_PUBLIC_KEY || "";
 const VAPID_PRIVATE = process.env.VAPID_PRIVATE_KEY || "";
@@ -111,17 +112,7 @@ async function loadStaticGtfs() {
   console.log(`Loaded ${newIndex.size} trips, ${newRoutes.size} routes, ${newStops.size} stops.`);
 }
 
-function startOfTripDay(yyyymmdd) {
-  // GTFS startDate "YYYYMMDD" → seconds since epoch at local-midnight (UTC approx; CapMetro is America/Chicago)
-  // For delay math we only need a stable reference; using UTC midnight introduces TZ skew but the delta
-  // (predicted - scheduled) cancels out as long as both reference the same anchor.
-  const y = Number(yyyymmdd.slice(0, 4));
-  const m = Number(yyyymmdd.slice(4, 6)) - 1;
-  const d = Number(yyyymmdd.slice(6, 8));
-  // CapMetro local TZ is America/Chicago (UTC-5 or -6). Use -6 (CST) as a stable anchor;
-  // DST drift just shifts delays by 1h uniformly within a day, which we filter via |delay| sanity check.
-  return Date.UTC(y, m, d, 6, 0, 0) / 1000;
-}
+const startOfTripDay = startOfChicagoDayFromYmd;
 
 async function refreshDelays() {
   try {
@@ -159,8 +150,8 @@ async function refreshDelays() {
       const scheduled = dayAnchor + sInfo.arrivalSec;
       const delaySec = next.predicted - scheduled;
 
-      // Sanity filter: > 90 min in either direction is almost certainly a TZ/data artifact, drop it.
-      if (Math.abs(delaySec) > 90 * 60) continue;
+      // Data-quality sanity filter: > 3h delay is almost always a stale/bad feed row.
+      if (Math.abs(delaySec) > 3 * 60 * 60) continue;
       if (delaySec < DELAY_THRESHOLD_SEC) continue;
 
       const route = routesById.get(routeId);
@@ -253,7 +244,7 @@ const insertSnapshot = db.prepare(`
 `);
 const patternForRoute = db.prepare(`
   SELECT
-    strftime('%Y-%m-%d', captured_at / 1000, 'unixepoch', '-06:00') AS local_day,
+    chicago_day(captured_at / 1000) AS local_day,
     COUNT(*) AS snapshots,
     AVG(delay_sec) AS avg_delay,
     MAX(delay_sec) AS max_delay
@@ -265,13 +256,15 @@ const patternForRoute = db.prepare(`
 const bulkPatterns = db.prepare(`
   SELECT
     route_id,
-    strftime('%Y-%m-%d', captured_at / 1000, 'unixepoch', '-06:00') AS local_day,
+    chicago_day(captured_at / 1000) AS local_day,
     COUNT(*) AS snapshots
   FROM delay_snapshots
   WHERE captured_at >= @since
   GROUP BY route_id, local_day
   HAVING snapshots >= @minPerDay
 `);
+
+const subscriptionByDevice = db.prepare(`SELECT * FROM push_subscriptions WHERE device_id = ?`);
 
 const upsertSubscription = db.prepare(`
   INSERT INTO push_subscriptions (device_id, endpoint, p256dh, auth, route_ids, created_at, updated_at)
@@ -406,6 +399,33 @@ app.post("/api/push/update-routes", (req, res) => {
   });
   if (result.changes === 0) return res.status(404).json({ error: "not subscribed" });
   res.json({ ok: true, watching: routes.length });
+});
+
+app.post("/api/push/test", async (req, res) => {
+  if (!PUSH_ENABLED) return res.status(503).json({ error: "push disabled" });
+  const { deviceId } = req.body || {};
+  if (!deviceId) return res.status(400).json({ error: "missing deviceId" });
+  const sub = subscriptionByDevice.get(deviceId);
+  if (!sub) return res.status(404).json({ error: "not subscribed on this device" });
+
+  try {
+    await webpush.sendNotification(
+      { endpoint: sub.endpoint, keys: { p256dh: sub.p256dh, auth: sub.auth } },
+      JSON.stringify({
+        title: "Test notification",
+        body: "If you can read this, push delivery is working.",
+        url: "/",
+        tag: "test",
+      }),
+    );
+    res.json({ ok: true });
+  } catch (err) {
+    if (err.statusCode === 404 || err.statusCode === 410) {
+      deleteSubscription.run(deviceId);
+      return res.status(410).json({ error: "subscription expired; please re-subscribe" });
+    }
+    res.status(500).json({ error: err.message, statusCode: err.statusCode });
+  }
 });
 
 app.post("/api/push/unsubscribe", (req, res) => {
