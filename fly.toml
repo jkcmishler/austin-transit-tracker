@@ -1,0 +1,29 @@
+# fly.io deploy config
+# Run `fly launch --copy-config` to use this file, or `fly deploy` after first launch.
+app = "austin-transit-tracker"
+primary_region = "dfw"
+
+[build]
+
+[env]
+  NODE_ENV = "production"
+  PORT = "8080"
+  # DB_PATH and CLIENT_DIST are set in the Dockerfile.
+
+[http_service]
+  internal_port = 8080
+  force_https = true
+  auto_stop_machines = "stop"
+  auto_start_machines = true
+  min_machines_running = 1
+  processes = ["app"]
+
+[[vm]]
+  size = "shared-cpu-1x"
+  memory = "512mb"
+
+# Persistent volume for SQLite. Create with:
+#   fly volumes create transit_data --region dfw --size 1
+[[mounts]]
+  source = "transit_data"
+  destination = "/data"

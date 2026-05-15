@@ -2,8 +2,13 @@ import express from "express";
 import cors from "cors";
 import AdmZip from "adm-zip";
 import webpush from "web-push";
+import { existsSync } from "fs";
+import { fileURLToPath } from "url";
+import { dirname, join } from "path";
 import { db } from "./db.js";
 import { startOfChicagoDayFromYmd, chicagoYmdFromEpochSec } from "./tz.js";
+
+const __dirname = dirname(fileURLToPath(import.meta.url));
 
 const VAPID_PUBLIC = process.env.VAPID_PUBLIC_KEY || "";
 const VAPID_PRIVATE = process.env.VAPID_PRIVATE_KEY || "";
@@ -556,6 +561,18 @@ app.get("/api/routes", (_req, res) => {
   });
   res.json({ items });
 });
+
+// Serve the built client. In dev the Vite proxy handles /api/* and serves
+// the SPA itself; in production this Express process serves both.
+const CLIENT_DIST = process.env.CLIENT_DIST || join(__dirname, "..", "client", "dist");
+if (existsSync(CLIENT_DIST)) {
+  app.use(express.static(CLIENT_DIST));
+  // SPA fallback for any non-API route. Reserve /api/* for the API.
+  app.get(/^\/(?!api\/).*/, (_req, res) => {
+    res.sendFile(join(CLIENT_DIST, "index.html"));
+  });
+  console.log(`Serving built client from ${CLIENT_DIST}`);
+}
 
 async function start() {
   await loadStaticGtfs();

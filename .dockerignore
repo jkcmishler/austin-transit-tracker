@@ -1,0 +1,14 @@
+node_modules
+**/node_modules
+.git
+.gitignore
+*.log
+.DS_Store
+client/dist
+server/data.db
+server/data.db-*
+server/.env
+.env
+.env.local
+README.md
+DEPLOY.md
